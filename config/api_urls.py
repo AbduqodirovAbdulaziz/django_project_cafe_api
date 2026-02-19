@@ -7,7 +7,7 @@ from tables.views import TableViewSet
 from orders.views import OrderViewSet
 from payments.views import PaymentViewSet
 from expenses.views import ExpenseCategoryViewSet, ExpenseViewSet
-from reports.views import DailyReportView, RangeReportView
+from reports.views import DailyReportView, RangeReportView, WaiterStatsView
 
 router = DefaultRouter()
 router.register(r"categories", CategoryViewSet, basename="category")
@@ -26,4 +26,5 @@ urlpatterns = [
     path("docs/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("reports/daily/", DailyReportView.as_view(), name="report-daily"),
     path("reports/range/", RangeReportView.as_view(), name="report-range"),
+    path("reports/waiter-stats/", WaiterStatsView.as_view(), name="report-waiter-stats"),
 ]

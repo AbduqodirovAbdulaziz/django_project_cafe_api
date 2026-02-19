@@ -3,15 +3,38 @@ from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 
+from accounts.permissions import _role
 from .models import Order, OrderItem, OrderStatusLog
 
 STATUS_TRANSITIONS = {
     Order.Status.NEW:      [Order.Status.COOKING, Order.Status.CANCELED],
     Order.Status.COOKING:  [Order.Status.READY,   Order.Status.CANCELED],
     Order.Status.READY:    [Order.Status.SERVED,  Order.Status.CANCELED],
-    Order.Status.SERVED:   [Order.Status.PAID,    Order.Status.CANCELED],
+    Order.Status.SERVED:   [Order.Status.CANCELED],   # PAID yo'q — faqat to'lov orqali
     Order.Status.PAID:     [],
     Order.Status.CANCELED: [],
+}
+
+# Rol asosida qaysi statuslarga o'tish mumkin
+ROLE_ALLOWED_TARGETS = {
+    "MANAGER": {
+        Order.Status.NEW:     [Order.Status.COOKING, Order.Status.CANCELED],
+        Order.Status.COOKING: [Order.Status.READY,   Order.Status.CANCELED],
+        Order.Status.READY:   [Order.Status.SERVED,  Order.Status.CANCELED],
+        Order.Status.SERVED:  [Order.Status.CANCELED],
+    },
+    "CHEF": {
+        Order.Status.NEW:     [Order.Status.COOKING],
+        Order.Status.COOKING: [Order.Status.READY],
+        Order.Status.READY:   [],
+        Order.Status.SERVED:  [],
+    },
+    "WAITER": {
+        Order.Status.NEW:     [Order.Status.CANCELED],
+        Order.Status.COOKING: [],
+        Order.Status.READY:   [Order.Status.SERVED],
+        Order.Status.SERVED:  [],
+    },
 }
 
 STATUS_UZ = {
@@ -32,15 +55,10 @@ STATUS_COLORS = {
     "CANCELED": "#e74c3c",
 }
 
-
 # ─────────────────────────────────────────────
-#  Order Admin forma — status dropdown qo'shilgan
+#  Order Admin forma
 # ─────────────────────────────────────────────
 class OrderAdminForm(forms.ModelForm):
-    """
-    Status o'zgartirish uchun: faqat ruxsat etilgan
-    statuslarni dropdown sifatida ko'rsatadi.
-    """
     new_status = forms.ChoiceField(
         label="Holatni o'zgartirish",
         choices=[("", "— o'zgartirmaslik —")],
@@ -52,7 +70,7 @@ class OrderAdminForm(forms.ModelForm):
         required=False,
         widget=forms.TextInput(attrs={
             "class": "form-control",
-            "placeholder": "Masalan: mijoz so'radi, oshpaz tayyor dedi...",
+            "placeholder": "Izohi (ixtiyoriy)...",
             "style": "max-width:400px;",
         }),
     )
@@ -62,10 +80,13 @@ class OrderAdminForm(forms.ModelForm):
         fields = "__all__"
 
     def __init__(self, *args, **kwargs):
+        self._request = kwargs.pop("request", None)
         super().__init__(*args, **kwargs)
         instance = kwargs.get("instance")
+
         if instance and instance.pk:
-            allowed = STATUS_TRANSITIONS.get(instance.status, [])
+            role = _role(self._request.user) if self._request else "MANAGER"
+            allowed = ROLE_ALLOWED_TARGETS.get(role, {}).get(instance.status, [])
             self.fields["new_status"].choices = (
                 [("", f"— o'zgartirmaslik ({STATUS_UZ.get(instance.status, instance.status)}) —")]
                 + [(s, STATUS_UZ.get(s, s)) for s in allowed]
@@ -81,13 +102,29 @@ class OrderAdminForm(forms.ModelForm):
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 1
-    fields = ("menu_item", "qty", "notes",
-              "item_name_snapshot", "unit_price_snapshot", "line_total")
+    fields = ("menu_item", "qty", "notes", "item_name_snapshot", "unit_price_snapshot", "line_total")
     readonly_fields = ("item_name_snapshot", "unit_price_snapshot", "line_total")
+
+    def has_add_permission(self, request, obj=None):
+        if obj and obj.status in (Order.Status.PAID, Order.Status.CANCELED):
+            return False
+        role = _role(request.user)
+        return role in ("MANAGER", "WAITER")
+
+    def has_change_permission(self, request, obj=None):
+        if obj and obj.status in (Order.Status.PAID, Order.Status.CANCELED):
+            return False
+        role = _role(request.user)
+        return role in ("MANAGER", "WAITER")
+
+    def has_delete_permission(self, request, obj=None):
+        if obj and obj.status in (Order.Status.PAID, Order.Status.CANCELED):
+            return False
+        return _role(request.user) == "MANAGER"
 
 
 # ─────────────────────────────────────────────
-#  OrderStatusLog inline — faqat ko'rish
+#  OrderStatusLog inline
 # ─────────────────────────────────────────────
 class OrderStatusLogInline(admin.TabularInline):
     model = OrderStatusLog
@@ -110,15 +147,13 @@ class OrderStatusLogInline(admin.TabularInline):
         return STATUS_UZ.get(obj.to_status, obj.to_status)
 
 
-
 # ─────────────────────────────────────────────
 #  OrderAdmin
 # ─────────────────────────────────────────────
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    form    = OrderAdminForm
     inlines = [OrderItemInline, OrderStatusLogInline]
-    actions = ["action_tolandi", "action_bekor"]
+    actions = ["action_bekor"]
 
     list_display  = (
         "id", "order_code", "turi", "holati_badge",
@@ -146,7 +181,8 @@ class OrderAdmin(admin.ModelAdmin):
             "fields": ("holati_badge", "new_status", "status_comment"),
             "description": (
                 "<span style='color:#856404;font-weight:600;'>"
-                "⚠️ Yangi holat tanlang va «Saqlash» tugmasini bosing.</span>"
+                "⚠️ Ruxsat etilgan holat tanlang va «Saqlash» tugmasini bosing. "
+                "PAID holati faqat to'lov orqali avtomatik o'rnatiladi.</span>"
             ),
         }),
         ("💰 Hisob-kitob", {
@@ -162,7 +198,97 @@ class OrderAdmin(admin.ModelAdmin):
         }),
     )
 
-    # ── list_display uchun ko'rinish metodlari ──
+    def get_form(self, request, obj=None, **kwargs):
+        """Formaga request ni uzatamiz (rol tekshirish uchun)."""
+        Form = super().get_form(request, obj, **kwargs)
+
+        class FormWithRequest(Form):
+            def __new__(cls, *args, **kwargs2):
+                kwargs2["request"] = request
+                return Form(*args, **kwargs2)
+
+        # Agar bu OrderAdminForm bo'lsa, request ni uzatamiz
+        if hasattr(Form, "_request") or Form.__name__ == "OrderAdminForm":
+            return FormWithRequest
+        return Form
+
+    def get_fieldsets(self, request, obj=None):
+        """Yangi order qo'shganda status bloki ko'rsatilmaydi."""
+        if obj is None:
+            role = _role(request.user)
+            base_fields = (
+                "order_type", "table",
+                "customer_name", "customer_phone",
+                "created_by", "notes",
+            )
+            if role == "MANAGER":
+                return (
+                    ("📋 Asosiy ma'lumotlar", {"fields": base_fields}),
+                    ("💰 Chegirma", {"fields": ("discount_type", "discount_value")}),
+                )
+            else:
+                return (
+                    ("📋 Asosiy ma'lumotlar", {"fields": base_fields}),
+                )
+        return self.fieldsets
+
+    def get_form(self, request, obj=None, **kwargs):
+        """Forma classiga request uzatamiz."""
+        kwargs["form"] = OrderAdminForm
+        form_class = super().get_form(request, obj, **kwargs)
+
+        original_init = form_class.__init__
+
+        def new_init(self_form, *args, **kw):
+            kw["request"] = request
+            original_init(self_form, *args, **kw)
+
+        form_class.__init__ = new_init
+        return form_class
+
+    def get_readonly_fields(self, request, obj=None):
+        role = _role(request.user)
+        readonly = list(self.readonly_fields)
+
+        if role == "CHEF":
+            # CHEF faqat ko'radi, hech narsani o'zgartira olmaydi
+            all_fields = [f.name for f in Order._meta.get_fields() if hasattr(f, 'name')]
+            return list(set(readonly + all_fields))
+
+        if role == "WAITER":
+            # WAITER discount/notes o'zgartira olmaydi (faqat status va o'z orderlari)
+            readonly += ["discount_type", "discount_value", "order_type", "table",
+                         "customer_name", "customer_phone", "created_by"]
+        return readonly
+
+    def has_add_permission(self, request):
+        return _role(request.user) in ("MANAGER", "WAITER")
+
+    def has_change_permission(self, request, obj=None):
+        role = _role(request.user)
+        if role == "MANAGER":
+            return True
+        if role == "WAITER":
+            if obj is None:
+                return True
+            return obj.created_by_id == request.user.id
+        if role == "CHEF":
+            return True  # ko'rish uchun, lekin readonly_fields hamma narsani qoplaydi
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return _role(request.user) == "MANAGER"
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        role = _role(request.user)
+        if role in ("MANAGER", "CHEF"):
+            return qs
+        if role == "WAITER":
+            return qs.filter(created_by=request.user)
+        return qs.none()
+
+    # ── list_display metodlar ──
     @admin.display(description="Turi")
     def turi(self, obj):
         return obj.get_order_type_display()
@@ -191,44 +317,32 @@ class OrderAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color:#27ae60;">✓ To\'liq</span>')
 
-    # ── Fieldsets: yangi order da status bloki ko'rsatilmaydi ──
-    def get_fieldsets(self, request, obj=None):
-        if obj is None:  # yangi order qo'shish
-            return (
-                ("📋 Asosiy ma'lumotlar", {
-                    "fields": (
-                        "order_type", "table",
-                        "customer_name", "customer_phone",
-                        "created_by", "notes",
-                    )
-                }),
-                ("💰 Hisob-kitob", {
-                    "fields": (
-                        "discount_type", "discount_value",
-                    ),
-                }),
-            )
-        return self.fieldsets
-
-    # ── Queryset ──
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        if request.user.is_superuser or request.user.is_staff:
-            return qs
-        if hasattr(request.user, "role") and request.user.role == "WAITER":
-            return qs.filter(created_by=request.user)
-        return qs.none()
-
     # ── Saqlashda status o'zgartirish ──
     def save_model(self, request, obj, form, change):
         new_status = form.cleaned_data.get("new_status", "")
         comment    = form.cleaned_data.get("status_comment", "").strip()
-
-        # Avval obyektni saqlaymiz
         super().save_model(request, obj, form, change)
 
-        # Keyin status o'zgartirish (agar tanlangan bo'lsa)
         if change and new_status:
+            # PAID ga manual o'tish taqiqlangan
+            if new_status == Order.Status.PAID:
+                self.message_user(
+                    request,
+                    "❌ PAID holati faqat to'lov orqali avtomatik o'rnatiladi.",
+                    messages.ERROR,
+                )
+                return
+
+            role = _role(request.user)
+            allowed = ROLE_ALLOWED_TARGETS.get(role, {}).get(obj.status, [])
+            if new_status not in [s for s in allowed]:
+                self.message_user(
+                    request,
+                    f"❌ {role} uchun bu status o'zgarishi ruxsat etilmagan.",
+                    messages.ERROR,
+                )
+                return
+
             try:
                 obj.refresh_from_db()
                 obj.change_status(
@@ -244,43 +358,47 @@ class OrderAdmin(admin.ModelAdmin):
             except (ValidationError, Exception) as e:
                 self.message_user(request, f"❌ Status xatosi: {e}", messages.ERROR)
 
-    # ── Ro'yxat sahifasidagi action lar ──
-    @admin.action(description="💰 TO'LANDI deb belgilash")
-    def action_tolandi(self, request, queryset):
-        for obj in queryset:
-            try:
-                obj.change_status(
-                    Order.Status.PAID,
-                    by_user=request.user,
-                    comment="Admin: to'landi",
-                )
-                self.message_user(request, f"✅ #{obj.id} to'landi.", messages.SUCCESS)
-            except Exception as e:
-                self.message_user(request, f"❌ #{obj.id}: {e}", messages.ERROR)
-
+    # ── Actions ──
     @admin.action(description="❌ BEKOR QILISH")
     def action_bekor(self, request, queryset):
+        role = _role(request.user)
         for obj in queryset:
+            if obj.status in (Order.Status.PAID, Order.Status.CANCELED):
+                self.message_user(request, f"#{obj.id} allaqachon yopiq.", messages.WARNING)
+                continue
+            # WAITER faqat NEW statusidagi o'z buyurtmasini bekor qila oladi
+            if role == "WAITER":
+                if obj.created_by_id != request.user.id or obj.status != Order.Status.NEW:
+                    self.message_user(
+                        request,
+                        f"#{obj.id}: WAITER faqat o'zining NEW holatdagi buyurtmasini bekor qila oladi.",
+                        messages.ERROR,
+                    )
+                    continue
             try:
-                obj.change_status(
-                    Order.Status.CANCELED,
-                    by_user=request.user,
-                    comment="Admin: bekor qilindi",
-                )
+                obj.change_status(Order.Status.CANCELED, by_user=request.user, comment="Admin: bekor qilindi")
                 self.message_user(request, f"✅ #{obj.id} bekor qilindi.", messages.SUCCESS)
             except Exception as e:
                 self.message_user(request, f"❌ #{obj.id}: {e}", messages.ERROR)
 
 
-
 # ─────────────────────────────────────────────
-#  OrderItem
+#  OrderItem Admin
 # ─────────────────────────────────────────────
 @admin.register(OrderItem)
 class OrderItemAdmin(admin.ModelAdmin):
     list_display    = ("order", "menu_item", "qty", "unit_price_snapshot", "line_total")
     search_fields   = ("item_name_snapshot", "order__order_code")
     readonly_fields = ("item_name_snapshot", "unit_price_snapshot", "line_total")
+
+    def has_add_permission(self, request):
+        return _role(request.user) in ("MANAGER", "WAITER")
+
+    def has_change_permission(self, request, obj=None):
+        return _role(request.user) in ("MANAGER", "WAITER")
+
+    def has_delete_permission(self, request, obj=None):
+        return _role(request.user) == "MANAGER"
 
 
 # ─────────────────────────────────────────────
@@ -298,6 +416,9 @@ class OrderStatusLogAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    def has_delete_permission(self, request, obj=None):
+        return _role(request.user) == "MANAGER"
 
     @admin.display(description="Dan")
     def from_uz(self, obj):
