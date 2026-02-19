@@ -1,0 +1,190 @@
+{% extends "admin/base.html" %}
+{% load i18n jazzmin static %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+#jazzy-usermenu {
+    display: none;
+    position: fixed;
+    min-width: 230px;
+    padding: 0;
+    z-index: 99999;
+    border-radius: 6px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.22);
+    border: 1px solid rgba(0,0,0,.12);
+    background: #fff;
+    overflow: hidden;
+}
+#jazzy-usermenu.kafe-open { display: block; }
+#jazzy-usermenu .dropdown-header {
+    padding: 10px 16px;
+    font-weight: 700;
+    font-size: .85rem;
+    color: #555;
+    background: #f8f9fa;
+    border-bottom: 1px solid #eee;
+}
+#jazzy-usermenu a.dropdown-item,
+#jazzy-usermenu button.dropdown-item {
+    padding: 9px 16px;
+    font-size: .9rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #333;
+    cursor: pointer;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    text-decoration: none;
+    border-bottom: 1px solid #f2f2f2;
+    transition: background .15s;
+}
+#jazzy-usermenu a.dropdown-item:hover,
+#jazzy-usermenu button.dropdown-item:hover {
+    background: #f0f4ff;
+    color: #1a1a2e;
+}
+#jazzy-usermenu .logout-btn {
+    color: #c0392b !important;
+}
+#jazzy-usermenu .logout-btn:hover {
+    background: #fff5f5 !important;
+}
+#jazzy-usermenu form { margin: 0; padding: 0; }
+/* Person ikonasini biroz kattaroq qilamiz */
+.nav-link[data-kafe-usertoggle] { font-size: 1.1rem; cursor: pointer; }
+</style>
+{% endblock %}
+
+{% block extrajs %}
+{{ block.super }}
+<script>
+(function () {
+'use strict';
+
+/* ================================================================
+   MUAMMO: toggle click → event bubble → document click → yopiladi
+   YECHIM: document listener faqat toggle TASHQARISINI kuzatadi,
+           toggle o'zida esa faqat ochish/yopish belgisi ishlatiladi.
+   ================================================================ */
+
+var _menuOpen = false;
+
+document.addEventListener('DOMContentLoaded', function () {
+
+    /* ----- 1. User dropdown tugmasi va menyusini topamiz ----- */
+    // Jazzmin `.nav-link.btn` class bilan chiqaradi user toggle ni
+    var toggle = document.querySelector('a.nav-link.btn[title], button.nav-link.btn[title]');
+    var menu   = document.getElementById('jazzy-usermenu');
+
+    if (!menu) {
+        // Dinamik ravishda yaratamiz
+        menu = buildUserMenu();
+        if (toggle && toggle.parentNode) {
+            toggle.parentNode.appendChild(menu);
+        } else {
+            document.body.appendChild(menu);
+        }
+    }
+
+    if (toggle && menu) {
+        // data atributi qo'shamiz tanish uchun
+        toggle.setAttribute('data-kafe-usertoggle', '1');
+
+        toggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();   // ← bubbling to'xtatiladi
+            if (_menuOpen) {
+                closeMenu(menu);
+            } else {
+                openMenu(toggle, menu);
+            }
+        });
+    }
+
+    /* ----- 2. Tashqariga bosish — toggle ICHIDA EMAS bo'lsa yop ----- */
+    document.addEventListener('click', function (e) {
+        if (!_menuOpen) return;
+        // Toggle yoki menyu ichiga bosilsa — yopma
+        if (e.target.closest('[data-kafe-usertoggle]')) return;
+        if (e.target.closest('#jazzy-usermenu')) return;
+        closeMenu(menu);
+    });
+
+    /* ----- 3. ESC ----- */
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && _menuOpen) closeMenu(menu);
+    });
+
+    /* ----- 4. BS4 → BS5 atribut almashtirish ----- */
+    [['data-toggle','data-bs-toggle'], ['data-dismiss','data-bs-dismiss'],
+     ['data-target','data-bs-target'], ['data-parent','data-bs-parent']]
+    .forEach(function(p) {
+        document.querySelectorAll('[' + p[0] + ']').forEach(function(el) {
+            if (!el.getAttribute(p[1])) el.setAttribute(p[1], el.getAttribute(p[0]));
+        });
+    });
+
+    /* ----- 5. Sidebar pushmenu ----- */
+    document.querySelectorAll('[data-widget="pushmenu"]').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            document.body.classList.toggle('sidebar-collapse');
+            document.body.classList.toggle('sidebar-open');
+        });
+    });
+
+}); // DOMContentLoaded
+
+/* -------- Ochish -------- */
+function openMenu(toggle, menu) {
+    var rect = toggle.getBoundingClientRect();
+    menu.style.top   = (rect.bottom + 6) + 'px';
+    menu.style.right = (window.innerWidth - rect.right + 0) + 'px';
+    menu.style.left  = 'auto';
+    menu.classList.add('kafe-open');
+    _menuOpen = true;
+}
+
+/* -------- Yopish -------- */
+function closeMenu(menu) {
+    menu.classList.remove('kafe-open');
+    _menuOpen = false;
+}
+
+/* -------- Dinamik menyu (Jazzmin #jazzy-usermenu yo'q bo'lsa) -------- */
+function buildUserMenu() {
+    var m = document.createElement('div');
+    m.id = 'jazzy-usermenu';
+
+    // CSRF token
+    var csrf = getCsrfToken();
+
+    m.innerHTML =
+        '<span class="dropdown-header"><i class="fas fa-user-circle mr-1"></i> Hisob</span>' +
+        '<a href="/admin/password_change/" class="dropdown-item">' +
+            '<i class="fas fa-key"></i> Parolni o\'zgartirish</a>' +
+        '<a href="/api/docs/" class="dropdown-item" target="_blank" rel="noopener">' +
+            '<i class="fas fa-book"></i> API hujjatlari</a>' +
+        '<form method="post" action="/admin/logout/" style="margin:0;padding:0">' +
+            '<input type="hidden" name="csrfmiddlewaretoken" value="' + (csrf || '') + '">' +
+            '<button type="submit" class="dropdown-item logout-btn">' +
+                '<i class="fas fa-sign-out-alt"></i> Tizimdan chiqish</button>' +
+        '</form>';
+    return m;
+}
+
+/* -------- CSRF token -------- */
+function getCsrfToken() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (el) return el.value;
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+}
+
+})();
+</script>
+{% endblock %}
