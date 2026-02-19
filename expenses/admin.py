@@ -71,4 +71,4 @@ class ExpenseAdmin(admin.ModelAdmin):
 
     @admin.display(description="Miqdori")
     def amount_display(self, obj):
-        return format_html('<strong style="color:#e74c3c;">{:,.0f} so\'m</strong>', obj.amount)
+        return format_html('<strong style="color:#e74c3c;">{} so\'m</strong>', f"{obj.amount:,.0f}")

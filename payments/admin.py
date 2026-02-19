@@ -10,6 +10,9 @@ from .models import Payment
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
+    class Media:
+        js = ("payments/js/payment_order_info.js",)
+
     list_display    = ("order", "order_holati", "jami_summa", "qoldiq", "method", "amount", "is_debt", "received_by", "paid_at")
     list_filter     = ("method", "is_debt", "paid_at")
     search_fields   = ("order__order_code",)
@@ -45,11 +48,21 @@ class PaymentAdmin(admin.ModelAdmin):
             return self.readonly_fields + ("order",)
         return self.readonly_fields
 
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "order":
+            # Faqat SERVED holatdagi buyurtmalarni ko'rsatamiz
+            kwargs["queryset"] = Order.objects.filter(status=Order.Status.SERVED)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
     def save_model(self, request, obj, form, change):
         role = _role(request.user)
 
         if not change:
             # Yangi to'lov tekshirishlari
+            if not obj.order:
+                self.message_user(request, "❌ Buyurtma tanlanishi shart.", messages.ERROR)
+                return
+
             if obj.order.status != Order.Status.SERVED:
                 self.message_user(
                     request,
@@ -60,11 +73,7 @@ class PaymentAdmin(admin.ModelAdmin):
 
             # WAITER faqat o'z buyurtmasiga to'lov qabul qila oladi
             if role == "WAITER" and obj.order.created_by_id != request.user.id:
-                self.message_user(
-                    request,
-                    "❌ Bu buyurtma sizga tegishli emas.",
-                    messages.ERROR,
-                )
+                self.message_user(request, "❌ Bu buyurtma sizga tegishli emas.", messages.ERROR)
                 return
 
             obj.received_by = request.user
@@ -72,7 +81,7 @@ class PaymentAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
         # To'liq to'langan bo'lsa PAID ga o'tkazish
-        if not change:
+        if not change and obj.order:
             order = obj.order
             order.refresh_from_db()
             if order.status == Order.Status.SERVED and order.due_amount <= Decimal("0.00"):
@@ -100,6 +109,7 @@ class PaymentAdmin(admin.ModelAdmin):
     # ── Display metodlar ──
     @admin.display(description="Buyurtma holati")
     def order_holati(self, obj):
+        if not obj.order: return "—"
         colors = {
             "SERVED": "#8e44ad", "PAID": "#16a085",
         }
@@ -111,29 +121,30 @@ class PaymentAdmin(admin.ModelAdmin):
 
     @admin.display(description="Jami summa")
     def jami_summa(self, obj):
-        return f"{obj.order.total:,.0f} so'm"
+        return f"{obj.order.total:,.0f} so'm" if obj.order else "0 so'm"
 
     @admin.display(description="Qoldiq")
     def qoldiq(self, obj):
-        if obj.order.due_amount > 0:
+        if obj.order and obj.order.due_amount > 0:
             return format_html(
-                '<span style="color:#e74c3c;font-weight:700;">{:,.0f} so\'m</span>',
-                obj.order.due_amount,
+                '<span style="color:#e74c3c;font-weight:700;">{} so\'m</span>',
+                f"{obj.order.due_amount:,.0f}"
             )
         return format_html('<span style="color:#27ae60;">✓ To\'liq</span>')
 
     @admin.display(description="Buyurtma ma'lumoti")
     def order_malumot(self, obj):
+        if not obj.order: return "—"
         return f"#{obj.order.order_code} — {obj.order.get_order_type_display()}"
 
     @admin.display(description="Buyurtma holati")
     def order_holati_info(self, obj):
-        return obj.order.get_status_display()
+        return obj.order.get_status_display() if obj.order else "—"
 
     @admin.display(description="Jami summa")
     def jami_summa_info(self, obj):
-        return f"{obj.order.total:,.0f} so'm"
+        return f"{obj.order.total:,.0f} so'm" if obj.order else "0 so'm"
 
     @admin.display(description="Qoldiq")
     def qoldiq_info(self, obj):
-        return f"{obj.order.due_amount:,.0f} so'm"
+        return f"{obj.order.due_amount:,.0f} so'm" if obj.order else "0 so'm"

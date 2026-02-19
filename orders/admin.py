@@ -198,19 +198,23 @@ class OrderAdmin(admin.ModelAdmin):
         }),
     )
 
+    class Media:
+        css = {
+            'all': ('orders/css/status_buttons.css',)
+        }
+        js = ('orders/js/status_buttons.js',)
+
     def get_form(self, request, obj=None, **kwargs):
-        """Formaga request ni uzatamiz (rol tekshirish uchun)."""
-        Form = super().get_form(request, obj, **kwargs)
+        """Forma classiga request uzatamiz."""
+        kwargs["form"] = OrderAdminForm
+        form_class = super().get_form(request, obj, **kwargs)
 
-        class FormWithRequest(Form):
-            def __new__(cls, *args, **kwargs2):
-                kwargs2["request"] = request
-                return Form(*args, **kwargs2)
+        class FormWithRequest(form_class):
+            def __init__(self, *args, **form_kwargs):
+                form_kwargs["request"] = request
+                super().__init__(*args, **form_kwargs)
 
-        # Agar bu OrderAdminForm bo'lsa, request ni uzatamiz
-        if hasattr(Form, "_request") or Form.__name__ == "OrderAdminForm":
-            return FormWithRequest
-        return Form
+        return FormWithRequest
 
     def get_fieldsets(self, request, obj=None):
         """Yangi order qo'shganda status bloki ko'rsatilmaydi."""
@@ -231,20 +235,6 @@ class OrderAdmin(admin.ModelAdmin):
                     ("📋 Asosiy ma'lumotlar", {"fields": base_fields}),
                 )
         return self.fieldsets
-
-    def get_form(self, request, obj=None, **kwargs):
-        """Forma classiga request uzatamiz."""
-        kwargs["form"] = OrderAdminForm
-        form_class = super().get_form(request, obj, **kwargs)
-
-        original_init = form_class.__init__
-
-        def new_init(self_form, *args, **kw):
-            kw["request"] = request
-            original_init(self_form, *args, **kw)
-
-        form_class.__init__ = new_init
-        return form_class
 
     def get_readonly_fields(self, request, obj=None):
         role = _role(request.user)

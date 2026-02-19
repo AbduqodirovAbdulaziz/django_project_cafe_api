@@ -112,6 +112,12 @@ class Order(models.Model):
         else:
             Table.objects.filter(id=self.table_id).update(status=Table.Status.OCCUPIED)
 
+    def delete(self, *args, **kwargs):
+        """Free the table before deleting the order."""
+        if self.table_id:
+            Table.objects.filter(id=self.table_id).update(status=Table.Status.FREE)
+        super().delete(*args, **kwargs)
+
     def recalculate_totals(self):
         """
         Recompute subtotal/discount/total + payments (paid_total/due_amount).

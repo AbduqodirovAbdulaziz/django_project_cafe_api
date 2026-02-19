@@ -11,7 +11,7 @@ class TableAdmin(admin.ModelAdmin):
     list_display    = ("number", "status_badge", "faol_buyurtmalar", "created_at")
     list_filter     = ("status",)
     search_fields   = ("number",)
-    readonly_fields = ("status", "created_at", "updated_at")
+    readonly_fields = ("created_at", "updated_at")
 
     fieldsets = (
         ("Stol ma'lumotlari", {

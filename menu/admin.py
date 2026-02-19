@@ -78,7 +78,7 @@ class MenuItemAdmin(admin.ModelAdmin):
 
     @admin.display(description="Narxi")
     def price_display(self, obj):
-        return format_html('<strong>{:,.0f} so\'m</strong>', obj.price)
+        return format_html('<strong>{} so\'m</strong>', f"{obj.price:,.0f}")
 
     @admin.display(description="Mavjud")
     def is_available_badge(self, obj):
