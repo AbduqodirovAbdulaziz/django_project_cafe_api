@@ -191,6 +191,25 @@ class OrderAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color:#27ae60;">✓ To\'liq</span>')
 
+    # ── Fieldsets: yangi order da status bloki ko'rsatilmaydi ──
+    def get_fieldsets(self, request, obj=None):
+        if obj is None:  # yangi order qo'shish
+            return (
+                ("📋 Asosiy ma'lumotlar", {
+                    "fields": (
+                        "order_type", "table",
+                        "customer_name", "customer_phone",
+                        "created_by", "notes",
+                    )
+                }),
+                ("💰 Hisob-kitob", {
+                    "fields": (
+                        "discount_type", "discount_value",
+                    ),
+                }),
+            )
+        return self.fieldsets
+
     # ── Queryset ──
     def get_queryset(self, request):
         qs = super().get_queryset(request)
