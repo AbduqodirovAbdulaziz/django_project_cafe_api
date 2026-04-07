@@ -142,11 +142,19 @@ class OrderViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="update-status")
     def update_status(self, request, pk=None):
         order     = self.get_object()
-        to_status = (request.data.get("to_status") or "").strip()
+        # 'to_status' yoki 'status' kalitini qabul qiladi (Flutter va boshqa clientlar uchun)
+        to_status = (
+            request.data.get("to_status") or
+            request.data.get("status") or
+            ""
+        ).strip()
         comment   = request.data.get("comment", "")
 
         if not to_status:
-            return Response({"detail": "to_status majburiy."}, status=http_status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "'to_status' yoki 'status' maydoni majburiy."},
+                status=http_status.HTTP_400_BAD_REQUEST
+            )
 
         # PAID ga manual o'tish taqiqlangan — faqat to'lov orqali avtomatik
         if to_status == Order.Status.PAID:
