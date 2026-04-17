@@ -3,8 +3,14 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from .serializers import CafeTokenObtainPairSerializer
+
+
+class LoginView(TokenObtainPairView):
+    serializer_class = CafeTokenObtainPairSerializer
 
 
 class MeView(APIView):
@@ -22,6 +28,8 @@ class MeView(APIView):
             "first_name": u.first_name,
             "last_name": u.last_name,
             "role": u.role,
+            "is_staff": u.is_staff,
+            "is_active": u.is_active,
         })
 
 
